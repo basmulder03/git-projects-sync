@@ -95,11 +95,10 @@ func (s *Syncer) SyncRepo(ctx context.Context, repoCfg config.RepoConfig) error 
 	if defaultBranch == "" {
 		detected, err := gitpkg.GetDefaultBranch(localPath)
 		if err != nil {
-			logging.Warn("could not detect default branch", "path", localPath, "err", err)
-			defaultBranch = "main"
-		} else {
-			defaultBranch = detected
+			logging.Warn("could not detect default branch, skipping sync", "path", localPath, "err", err)
+			return nil
 		}
+		defaultBranch = detected
 	}
 
 	currentBranch := status.CurrentBranch

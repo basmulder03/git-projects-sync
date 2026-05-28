@@ -137,31 +137,56 @@ func UpdateLocalBranchFromRemote(localPath, branch string) error {
 	return run(ctx, localPath, "git", "fetch", "origin", ref)
 }
 
-// GetDefaultBranch detects the default branch, trying "main" then "master".
+// GetDefaultBranch detects the remote's default branch using three strategies:
+//  1. refs/remotes/origin/HEAD (set by git clone; cheapest)
+//  2. `git remote set-head origin --auto` + re-read (queries remote HEAD once, then caches)
+//  3. `git remote show origin` output parsing (network call, works even without set-head)
 func GetDefaultBranch(localPath string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), cmdTimeout)
 	defer cancel()
 
-	// Prefer remote HEAD symbolic ref.
-	out, err := output(ctx, localPath, "git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	// Strategy 1: cached symbolic ref (fast, no network).
+	if branch := readOriginHEAD(ctx, localPath); branch != "" {
+		return branch, nil
+	}
+
+	// Strategy 2: auto-detect and cache origin/HEAD (one network call, cached afterward).
+	setCtx, setCancel := context.WithTimeout(context.Background(), cmdTimeout)
+	_ = run(setCtx, localPath, "git", "remote", "set-head", "origin", "--auto")
+	setCancel()
+	if branch := readOriginHEAD(ctx, localPath); branch != "" {
+		return branch, nil
+	}
+
+	// Strategy 3: parse `git remote show origin` — authoritative but slower.
+	showCtx, showCancel := context.WithTimeout(context.Background(), cmdTimeout)
+	defer showCancel()
+	out, err := output(showCtx, localPath, "git", "remote", "show", "origin")
 	if err == nil {
-		ref := strings.TrimSpace(out)
-		if after, ok := strings.CutPrefix(ref, "origin/"); ok {
-			return after, nil
-		}
-		return ref, nil
-	}
-
-	for _, candidate := range []string{"main", "master"} {
-		checkCtx, checkCancel := context.WithTimeout(context.Background(), cmdTimeout)
-		err := run(checkCtx, localPath, "git", "rev-parse", "--verify", "origin/"+candidate)
-		checkCancel()
-		if err == nil {
-			return candidate, nil
+		for _, line := range strings.Split(out, "\n") {
+			line = strings.TrimSpace(line)
+			if after, ok := strings.CutPrefix(line, "HEAD branch:"); ok {
+				branch := strings.TrimSpace(after)
+				if branch != "" && branch != "(unknown)" {
+					return branch, nil
+				}
+			}
 		}
 	}
 
-	return "", fmt.Errorf("could not detect default branch in %s", filepath.Base(localPath))
+	return "", fmt.Errorf("could not detect default branch for origin in %s", filepath.Base(localPath))
+}
+
+func readOriginHEAD(ctx context.Context, localPath string) string {
+	out, err := output(ctx, localPath, "git", "symbolic-ref", "--short", "refs/remotes/origin/HEAD")
+	if err != nil {
+		return ""
+	}
+	ref := strings.TrimSpace(out)
+	if after, ok := strings.CutPrefix(ref, "origin/"); ok {
+		return after
+	}
+	return ref
 }
 
 // DeleteLocalBranch deletes a local branch (safe delete, must be merged).
