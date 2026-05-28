@@ -1,0 +1,20 @@
+# Build output
+git-sync
+git-sync.exe
+dist/
+
+# Test artifacts
+*.test
+coverage.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Config with sensitive data (user keeps their own copy)
+.test-config.toml
