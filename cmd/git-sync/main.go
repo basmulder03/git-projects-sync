@@ -23,6 +23,7 @@ import (
 	"github.com/basmulder03/git-projects-sync/internal/provider"
 	"github.com/basmulder03/git-projects-sync/internal/registry"
 	syncpkg "github.com/basmulder03/git-projects-sync/internal/sync"
+	updatepkg "github.com/basmulder03/git-projects-sync/internal/update"
 )
 
 // version is injected by goreleaser via -ldflags "-X main.version=..."
@@ -47,7 +48,7 @@ func buildRoot() *cobra.Command {
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
 			// Skip config loading for commands that bootstrap the installation.
 			switch cmd.Name() {
-			case "init", "install", "uninstall", "version":
+			case "init", "install", "uninstall", "version", "update":
 				return nil
 			}
 			if cfgPath == "" {
@@ -67,6 +68,7 @@ func buildRoot() *cobra.Command {
 	root.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path (default ~/.git-sync/config.toml)")
 
 	root.AddCommand(buildVersion())
+	root.AddCommand(buildUpdate(version))
 	root.AddCommand(buildInstall())
 	root.AddCommand(buildUninstall())
 	root.AddCommand(buildInit())
@@ -89,6 +91,36 @@ func buildVersion() *cobra.Command {
 		Use:   "version",
 		Short: "Print version",
 		Run:   func(_ *cobra.Command, _ []string) { fmt.Println(version) },
+	}
+}
+
+// --- update ---
+
+func buildUpdate(currentVersion string) *cobra.Command {
+	return &cobra.Command{
+		Use:   "update",
+		Short: "Check for a newer release",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			fmt.Print("Checking for updates... ")
+			info, available, err := updatepkg.CheckLatest(currentVersion)
+			if err != nil {
+				return fmt.Errorf("check update: %w", err)
+			}
+
+			if !available {
+				if currentVersion == "dev" {
+					fmt.Println("dev build, skipping version check")
+				} else {
+					fmt.Printf("already up to date (%s)\n", currentVersion)
+				}
+				return nil
+			}
+
+			fmt.Printf("update available: %s → %s\n", currentVersion, info.TagName)
+			fmt.Printf("release notes: %s\n", info.HTMLURL)
+			fmt.Println("\nTo update, run: go install github.com/basmulder03/git-projects-sync/cmd/git-sync@latest")
+			return nil
+		},
 	}
 }
 

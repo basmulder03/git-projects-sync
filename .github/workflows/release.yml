@@ -27,6 +27,9 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Verify build
+        run: go build ./cmd/git-sync
+
       - name: Compute version
         id: version
         run: |
@@ -46,9 +49,10 @@ jobs:
           git tag "${{ steps.version.outputs.version }}"
           git push origin "${{ steps.version.outputs.version }}"
 
-      - uses: goreleaser/goreleaser-action@v6
-        with:
-          version: ~> v2
-          args: release --clean
+      - name: Create GitHub release
+        run: |
+          gh release create "${{ steps.version.outputs.version }}" \
+            --title "${{ steps.version.outputs.version }}" \
+            --generate-notes
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
