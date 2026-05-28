@@ -1,0 +1,19 @@
+baseURL = 'https://basmulder03.github.io/git-projects-sync/'
+languageCode = 'en-us'
+title = 'git-projects-sync'
+theme = 'hugo-book'
+
+[markup.goldmark.renderer]
+  unsafe = true
+
+[markup.highlight]
+  style = 'github'
+
+[params]
+  BookTheme     = 'auto'
+  BookToC       = true
+  BookSearch    = true
+  BookRepo      = 'https://github.com/basmulder03/git-projects-sync'
+  BookEditPath  = 'edit/main/docs/content'
+  BookSection   = 'docs'
+  BookMenuBundle = false

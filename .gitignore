@@ -18,3 +18,7 @@ Thumbs.db
 
 # Config with sensitive data (user keeps their own copy)
 .test-config.toml
+
+# Hugo build output
+docs/public/
+docs/resources/
