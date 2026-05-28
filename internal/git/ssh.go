@@ -2,10 +2,14 @@
 package git
 
 import (
+	"bytes"
+	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/basmulder03/git-projects-sync/internal/config"
 )
@@ -117,6 +121,140 @@ func replaceMarkedBlock(content, accountID, block string) string {
 		content += "\n"
 	}
 	return content + beginMarker + "\n" + block + endMarker + "\n"
+}
+
+// SSHKeyExists returns true when the private key file at keyPath exists.
+func SSHKeyExists(keyPath string) bool {
+	_, err := os.Stat(config.ExpandPath(keyPath))
+	return err == nil
+}
+
+// PublicKeyPath returns the expected public key path for a private key path.
+func PublicKeyPath(privateKeyPath string) string {
+	return config.ExpandPath(privateKeyPath) + ".pub"
+}
+
+// ReadPublicKey returns the contents of the public key file for the given private key path.
+func ReadPublicKey(privateKeyPath string) (string, error) {
+	pubPath := PublicKeyPath(privateKeyPath)
+	data, err := os.ReadFile(pubPath)
+	if err != nil {
+		return "", fmt.Errorf("read public key %s: %w", pubPath, err)
+	}
+	return strings.TrimSpace(string(data)), nil
+}
+
+// GenerateSSHKey generates an ed25519 SSH key pair at keyPath using ssh-keygen.
+// Set overwrite=true to replace an existing key.
+func GenerateSSHKey(keyPath, comment string, overwrite bool) error {
+	expanded := config.ExpandPath(keyPath)
+
+	if !overwrite {
+		if _, err := os.Stat(expanded); err == nil {
+			return fmt.Errorf("key already exists at %s (use --force to overwrite)", expanded)
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(expanded), 0o700); err != nil {
+		return fmt.Errorf("create key dir: %w", err)
+	}
+
+	// Remove existing key files so ssh-keygen does not prompt.
+	_ = os.Remove(expanded)
+	_ = os.Remove(expanded + ".pub")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, "ssh-keygen", "-t", "ed25519", "-C", comment, "-f", expanded, "-N", "")
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("ssh-keygen: %w\n%s", err, stderr.String())
+	}
+	return nil
+}
+
+// SSHConfigEntryExists returns true when the ~/.ssh/config file contains a managed block for accountID.
+func SSHConfigEntryExists(accountID string) (bool, error) {
+	cfgPath, err := sshConfigPath()
+	if err != nil {
+		return false, err
+	}
+	content, err := readFileOrEmpty(cfgPath)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(content, "# git-sync-begin:"+accountID), nil
+}
+
+// SSHHostAlias returns the SSH host alias used in ~/.ssh/config for an account.
+func SSHHostAlias(account config.AccountConfig) string {
+	switch account.Provider {
+	case "github":
+		return "github.com-" + account.ID
+	case "azure_devops":
+		return "ssh.dev.azure.com-" + account.ID
+	default:
+		return account.Provider + "-" + account.ID
+	}
+}
+
+// TestSSHConnection tests the SSH connection for the account.
+// Returns the server's response output, whether authentication succeeded, and any exec error.
+// Authentication success is determined by the response content, not the exit code
+// (GitHub returns exit 1 on successful auth; AzDo returns exit 128).
+func TestSSHConnection(account config.AccountConfig) (string, bool, error) {
+	alias := SSHHostAlias(account)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	var buf bytes.Buffer
+	cmd := exec.CommandContext(ctx, "ssh", "-T",
+		"-o", "BatchMode=yes",
+		"-o", "StrictHostKeyChecking=accept-new",
+		"-o", "ConnectTimeout=10",
+		"git@"+alias,
+	)
+	cmd.Stdout = &buf
+	cmd.Stderr = &buf
+	_ = cmd.Run() // exit code is non-zero even on success for GitHub/AzDo
+
+	out := strings.TrimSpace(buf.String())
+	success := isSSHAuthSuccess(account.Provider, out)
+	return out, success, nil
+}
+
+// ProviderKeyURL returns the URL where the user should add their public key.
+func ProviderKeyURL(account config.AccountConfig) string {
+	switch account.Provider {
+	case "github":
+		return "https://github.com/settings/ssh/new"
+	case "azure_devops":
+		org := account.Organization
+		if org == "" {
+			org = account.Username
+		}
+		return fmt.Sprintf("https://dev.azure.com/%s/_usersSettings/keys", org)
+	default:
+		return ""
+	}
+}
+
+func isSSHAuthSuccess(provider, output string) bool {
+	lower := strings.ToLower(output)
+	switch provider {
+	case "github":
+		// "Hi username! You've successfully authenticated"
+		return strings.Contains(lower, "successfully authenticated") || strings.Contains(lower, "hi ")
+	case "azure_devops":
+		// "remote: Shell access is not supported." means auth worked
+		return strings.Contains(lower, "shell access is not supported") ||
+			strings.Contains(lower, "successfully authenticated")
+	default:
+		return strings.Contains(lower, "successfully authenticated")
+	}
 }
 
 func readFileOrEmpty(path string) (string, error) {

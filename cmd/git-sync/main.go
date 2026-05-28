@@ -69,6 +69,7 @@ func buildRoot() *cobra.Command {
 	root.AddCommand(buildStatus())
 	root.AddCommand(buildDaemon())
 	root.AddCommand(buildLogs())
+	root.AddCommand(buildSSH())
 
 	return root
 }
@@ -614,6 +615,154 @@ func buildLogs() *cobra.Command {
 	}
 	cmd.Flags().IntVar(&lines, "lines", 50, "number of lines to show")
 	return cmd
+}
+
+// --- ssh ---
+
+func buildSSH() *cobra.Command {
+	ssh := &cobra.Command{
+		Use:   "ssh",
+		Short: "Manage SSH keys for provider accounts",
+	}
+	ssh.AddCommand(buildSSHGenerate())
+	ssh.AddCommand(buildSSHShowPubkey())
+	ssh.AddCommand(buildSSHTest())
+	ssh.AddCommand(buildSSHStatus())
+	return ssh
+}
+
+func buildSSHGenerate() *cobra.Command {
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "generate <account-id>",
+		Short: "Generate an ed25519 SSH key pair for an account",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			account, err := findAccount(args[0])
+			if err != nil {
+				return err
+			}
+			if account.SSHKeyPath == "" {
+				return fmt.Errorf("account %q has no ssh_key_path configured", account.ID)
+			}
+
+			comment := fmt.Sprintf("git-sync:%s", account.ID)
+			if err := gitpkg.GenerateSSHKey(account.SSHKeyPath, comment, force); err != nil {
+				return err
+			}
+			fmt.Printf("Key generated: %s\n", config.ExpandPath(account.SSHKeyPath))
+
+			// Update ~/.ssh/config entry.
+			if err := gitpkg.EnsureSSHEntry(*account); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: SSH config update failed: %v\n", err)
+			} else {
+				fmt.Printf("SSH config updated for host alias: %s\n", gitpkg.SSHHostAlias(*account))
+			}
+
+			// Show public key and provider URL.
+			pubKey, err := gitpkg.ReadPublicKey(account.SSHKeyPath)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "warning: could not read public key: %v\n", err)
+			} else {
+				fmt.Printf("\nPublic key (add this to your provider):\n\n%s\n", pubKey)
+			}
+
+			if url := gitpkg.ProviderKeyURL(*account); url != "" {
+				fmt.Printf("\nAdd at: %s\n", url)
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing key")
+	return cmd
+}
+
+func buildSSHShowPubkey() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show-pubkey <account-id>",
+		Short: "Print the public key and provider URL for an account",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			account, err := findAccount(args[0])
+			if err != nil {
+				return err
+			}
+			if account.SSHKeyPath == "" {
+				return fmt.Errorf("account %q has no ssh_key_path configured", account.ID)
+			}
+
+			pubKey, err := gitpkg.ReadPublicKey(account.SSHKeyPath)
+			if err != nil {
+				return err
+			}
+			fmt.Println(pubKey)
+
+			if url := gitpkg.ProviderKeyURL(*account); url != "" {
+				fmt.Printf("\nAdd at: %s\n", url)
+			}
+			return nil
+		},
+	}
+}
+
+func buildSSHTest() *cobra.Command {
+	return &cobra.Command{
+		Use:   "test <account-id>",
+		Short: "Test the SSH connection for an account",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			account, err := findAccount(args[0])
+			if err != nil {
+				return err
+			}
+
+			alias := gitpkg.SSHHostAlias(*account)
+			fmt.Printf("Testing SSH connection to %s ...\n", alias)
+
+			out, success, err := gitpkg.TestSSHConnection(*account)
+			if err != nil {
+				return fmt.Errorf("ssh test: %w", err)
+			}
+			if out != "" {
+				fmt.Printf("Server response: %s\n", out)
+			}
+			if success {
+				fmt.Println("Authentication successful")
+			} else {
+				fmt.Fprintln(os.Stderr, "Authentication failed — check key is added to provider")
+				os.Exit(1)
+			}
+			return nil
+		},
+	}
+}
+
+func buildSSHStatus() *cobra.Command {
+	return &cobra.Command{
+		Use:   "status",
+		Short: "Show SSH key status for all accounts",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			fmt.Fprintln(w, "ACCOUNT\tPROVIDER\tKEY PATH\tKEY EXISTS\tSSH CONFIG")
+			for _, account := range cfg.Accounts {
+				keyExists := "no"
+				if account.SSHKeyPath != "" && gitpkg.SSHKeyExists(account.SSHKeyPath) {
+					keyExists = "yes"
+				}
+				sshConfig := "no"
+				if ok, _ := gitpkg.SSHConfigEntryExists(account.ID); ok {
+					sshConfig = "yes"
+				}
+				keyPath := account.SSHKeyPath
+				if keyPath == "" {
+					keyPath = "(not set)"
+				}
+				fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n",
+					account.ID, account.Provider, keyPath, keyExists, sshConfig)
+			}
+			return w.Flush()
+		},
+	}
 }
 
 // --- helpers ---
