@@ -17,12 +17,16 @@ import (
 	"github.com/basmulder03/git-projects-sync/internal/config"
 	daemonpkg "github.com/basmulder03/git-projects-sync/internal/daemon"
 	gitpkg "github.com/basmulder03/git-projects-sync/internal/git"
+	installpkg "github.com/basmulder03/git-projects-sync/internal/install"
 	"github.com/basmulder03/git-projects-sync/internal/keychain"
 	"github.com/basmulder03/git-projects-sync/internal/logging"
 	"github.com/basmulder03/git-projects-sync/internal/provider"
 	"github.com/basmulder03/git-projects-sync/internal/registry"
 	syncpkg "github.com/basmulder03/git-projects-sync/internal/sync"
 )
+
+// version is injected by goreleaser via -ldflags "-X main.version=..."
+var version = "dev"
 
 var (
 	cfgPath string
@@ -41,8 +45,9 @@ func buildRoot() *cobra.Command {
 		Use:   "git-sync",
 		Short: "Sync Git repositories from GitHub and Azure DevOps",
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			// Skip config loading for init command.
-			if cmd.Name() == "init" {
+			// Skip config loading for commands that bootstrap the installation.
+			switch cmd.Name() {
+			case "init", "install", "uninstall", "version":
 				return nil
 			}
 			if cfgPath == "" {
@@ -61,6 +66,9 @@ func buildRoot() *cobra.Command {
 	}
 	root.PersistentFlags().StringVar(&cfgPath, "config", "", "config file path (default ~/.git-sync/config.toml)")
 
+	root.AddCommand(buildVersion())
+	root.AddCommand(buildInstall())
+	root.AddCommand(buildUninstall())
 	root.AddCommand(buildInit())
 	root.AddCommand(buildAccount())
 	root.AddCommand(buildDiscover())
@@ -72,6 +80,193 @@ func buildRoot() *cobra.Command {
 	root.AddCommand(buildSSH())
 
 	return root
+}
+
+// --- version ---
+
+func buildVersion() *cobra.Command {
+	return &cobra.Command{
+		Use:   "version",
+		Short: "Print version",
+		Run:   func(_ *cobra.Command, _ []string) { fmt.Println(version) },
+	}
+}
+
+// --- install / uninstall ---
+
+func buildInstall() *cobra.Command {
+	var (
+		system      bool
+		noAutostart bool
+		noWizard    bool
+	)
+	cmd := &cobra.Command{
+		Use:   "install",
+		Short: "Install git-sync and register as a login daemon",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if err := installpkg.Install(installpkg.Options{
+				System:      system,
+				NoAutostart: noAutostart,
+			}); err != nil {
+				return err
+			}
+
+			// Ensure config exists.
+			configPath := cfgPath
+			if configPath == "" {
+				configPath = config.DefaultConfigPath()
+			}
+			if _, err := os.Stat(configPath); os.IsNotExist(err) {
+				if err := config.Save(config.DefaultConfig(), configPath); err != nil {
+					return fmt.Errorf("create config: %w", err)
+				}
+				fmt.Printf("Config created at %s\n", configPath)
+			}
+
+			if noWizard {
+				fmt.Println("\nDone. Run 'git-sync account add' to configure your first account.")
+				return nil
+			}
+
+			loaded, err := config.Load(configPath)
+			if err != nil {
+				return err
+			}
+			cfg = loaded
+
+			if len(cfg.Accounts) == 0 {
+				fmt.Println("\nNo accounts configured — let's set up your first account.")
+				if err := runAccountWizard(cfg, configPath); err != nil {
+					fmt.Fprintf(os.Stderr, "Account setup: %v\n", err)
+					fmt.Println("Run 'git-sync account add' to configure an account later.")
+				}
+			} else {
+				fmt.Printf("\nDone. %d account(s) configured.\n", len(cfg.Accounts))
+			}
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&system, "system", false, "install system-wide (requires admin/root)")
+	cmd.Flags().BoolVar(&noAutostart, "no-autostart", false, "skip autostart registration")
+	cmd.Flags().BoolVar(&noWizard, "no-wizard", false, "skip first-account setup wizard")
+	return cmd
+}
+
+func buildUninstall() *cobra.Command {
+	var system bool
+	cmd := &cobra.Command{
+		Use:   "uninstall",
+		Short: "Remove autostart registration",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return installpkg.Uninstall(installpkg.Options{System: system})
+		},
+	}
+	cmd.Flags().BoolVar(&system, "system", false, "remove system-wide registration (requires admin/root)")
+	return cmd
+}
+
+// runAccountWizard interactively collects account details and saves to config.
+func runAccountWizard(c *config.Config, configPath string) error {
+	scanner := bufio.NewScanner(os.Stdin)
+
+	prompt := func(question string) string {
+		fmt.Print(question)
+		scanner.Scan()
+		return strings.TrimSpace(scanner.Text())
+	}
+	promptDefault := func(question, def string) string {
+		fmt.Printf("%s [%s]: ", question, def)
+		scanner.Scan()
+		v := strings.TrimSpace(scanner.Text())
+		if v == "" {
+			return def
+		}
+		return v
+	}
+	confirmYes := func(question string) bool {
+		fmt.Printf("%s [Y/n]: ", question)
+		scanner.Scan()
+		v := strings.TrimSpace(strings.ToLower(scanner.Text()))
+		return v == "" || v == "y" || v == "yes"
+	}
+
+	// Provider
+	prov := prompt("Provider (github / azure_devops): ")
+	switch prov {
+	case "github", "azure_devops":
+	default:
+		return fmt.Errorf("unknown provider %q — must be github or azure_devops", prov)
+	}
+
+	// Account ID
+	id := prompt("Account ID (e.g. github-personal): ")
+	if id == "" {
+		return fmt.Errorf("account ID cannot be empty")
+	}
+	for _, a := range c.Accounts {
+		if a.ID == id {
+			return fmt.Errorf("account %q already exists", id)
+		}
+	}
+
+	var username, org string
+	if prov == "github" {
+		username = prompt("GitHub username: ")
+	} else {
+		org = prompt("Azure DevOps organization: ")
+	}
+
+	defaultKey := fmt.Sprintf("~/.ssh/git-sync-%s", id)
+	sshKey := promptDefault("SSH key path", defaultKey)
+
+	cloneMethod := promptDefault("Clone method (ssh / https)", "ssh")
+	if cloneMethod != "ssh" && cloneMethod != "https" {
+		cloneMethod = "ssh"
+	}
+
+	account := config.AccountConfig{
+		ID:           id,
+		Provider:     prov,
+		Username:     username,
+		Organization: org,
+		SSHKeyPath:   sshKey,
+		CloneMethod:  cloneMethod,
+	}
+	c.Accounts = append(c.Accounts, account)
+
+	if cloneMethod == "ssh" {
+		if confirmYes(fmt.Sprintf("Generate SSH key at %s", sshKey)) {
+			if err := gitpkg.GenerateSSHKey(sshKey, "git-sync:"+id, false); err != nil {
+				fmt.Fprintf(os.Stderr, "  Key generation: %v\n", err)
+			} else {
+				if err := gitpkg.EnsureSSHEntry(account); err != nil {
+					fmt.Fprintf(os.Stderr, "  SSH config: %v\n", err)
+				} else {
+					fmt.Printf("  SSH config entry: %s\n", gitpkg.SSHHostAlias(account))
+				}
+				pubKey, err := gitpkg.ReadPublicKey(sshKey)
+				if err == nil {
+					fmt.Printf("\nPublic key (add this to your provider):\n\n%s\n\n", pubKey)
+				}
+				if url := gitpkg.ProviderKeyURL(account); url != "" {
+					fmt.Printf("Add at: %s\n\n", url)
+				}
+			}
+		}
+	}
+
+	if confirmYes(fmt.Sprintf("Store PAT for %q in keychain now", id)) {
+		if err := promptAndStorePAT(id); err != nil {
+			fmt.Fprintf(os.Stderr, "  PAT: %v\n", err)
+		}
+	}
+
+	if err := config.Save(c, configPath); err != nil {
+		return err
+	}
+	fmt.Printf("\nAccount %q configured!\n", id)
+	fmt.Printf("Run 'git-sync discover %s --add' to discover and track repositories.\n", id)
+	return nil
 }
 
 // --- init ---

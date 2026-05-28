@@ -17,40 +17,53 @@ import (
 // EnsureSSHEntry creates or replaces the SSH config block for the given account.
 // The block is delimited by marker comments so it can be updated idempotently.
 func EnsureSSHEntry(account config.AccountConfig) error {
-	sshConfigPath, err := sshConfigPath()
+	p, err := sshConfigPath()
 	if err != nil {
 		return err
 	}
-
-	if err := os.MkdirAll(filepath.Dir(sshConfigPath), 0o700); err != nil {
-		return fmt.Errorf("ensure ssh dir: %w", err)
-	}
-
-	existing, err := readFileOrEmpty(sshConfigPath)
-	if err != nil {
-		return err
-	}
-
-	block := buildSSHBlock(account)
-	updated := replaceMarkedBlock(existing, account.ID, block)
-
-	return writeAtomic(sshConfigPath, updated)
+	return ensureSSHEntryAt(account, p)
 }
 
 // RemoveSSHEntry removes the SSH config block for the given account ID.
 func RemoveSSHEntry(accountID string) error {
-	sshConfigPath, err := sshConfigPath()
+	p, err := sshConfigPath()
 	if err != nil {
 		return err
 	}
+	return removeSSHEntryAt(accountID, p)
+}
 
-	existing, err := readFileOrEmpty(sshConfigPath)
+// ensureSSHEntryAt writes the block to a specific config file path (used in tests).
+func ensureSSHEntryAt(account config.AccountConfig, configPath string) error {
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		return fmt.Errorf("ensure ssh dir: %w", err)
+	}
+	existing, err := readFileOrEmpty(configPath)
 	if err != nil {
 		return err
 	}
+	block := buildSSHBlock(account)
+	updated := replaceMarkedBlock(existing, account.ID, block)
+	return writeAtomic(configPath, updated)
+}
 
+// removeSSHEntryAt removes the block from a specific config file path (used in tests).
+func removeSSHEntryAt(accountID, configPath string) error {
+	existing, err := readFileOrEmpty(configPath)
+	if err != nil {
+		return err
+	}
 	updated := replaceMarkedBlock(existing, accountID, "")
-	return writeAtomic(sshConfigPath, updated)
+	return writeAtomic(configPath, updated)
+}
+
+// sshConfigEntryExistsAt checks for a managed block at a specific config file path (used in tests).
+func sshConfigEntryExistsAt(accountID, configPath string) (bool, error) {
+	content, err := readFileOrEmpty(configPath)
+	if err != nil {
+		return false, err
+	}
+	return strings.Contains(content, "# git-sync-begin:"+accountID), nil
 }
 
 func sshConfigPath() (string, error) {
@@ -177,15 +190,11 @@ func GenerateSSHKey(keyPath, comment string, overwrite bool) error {
 
 // SSHConfigEntryExists returns true when the ~/.ssh/config file contains a managed block for accountID.
 func SSHConfigEntryExists(accountID string) (bool, error) {
-	cfgPath, err := sshConfigPath()
+	p, err := sshConfigPath()
 	if err != nil {
 		return false, err
 	}
-	content, err := readFileOrEmpty(cfgPath)
-	if err != nil {
-		return false, err
-	}
-	return strings.Contains(content, "# git-sync-begin:"+accountID), nil
+	return sshConfigEntryExistsAt(accountID, p)
 }
 
 // SSHHostAlias returns the SSH host alias used in ~/.ssh/config for an account.

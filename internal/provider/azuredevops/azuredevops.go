@@ -4,6 +4,7 @@ package azuredevops
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/microsoft/azure-devops-go-api/azuredevops/v7"
@@ -18,9 +19,11 @@ import (
 
 // AzureDevOpsProvider lists repositories from an Azure DevOps organisation.
 type AzureDevOpsProvider struct {
-	connection  *azuredevops.Connection
 	account     config.AccountConfig
 	rateLimiter *rate.Limiter
+	// getProjects and getRepos are injectable for testing.
+	getProjects func(ctx context.Context) ([]azdocore.TeamProjectReference, error)
+	getRepos    func(ctx context.Context, project string) ([]azdogit.GitRepository, error)
 }
 
 // New creates an AzureDevOpsProvider authenticated with the given Authenticator.
@@ -36,11 +39,46 @@ func New(account config.AccountConfig, a auth.Authenticator) (*AzureDevOpsProvid
 	orgURL := fmt.Sprintf("https://dev.azure.com/%s", account.Organization)
 	conn := azuredevops.NewPatConnection(orgURL, token)
 
-	return &AzureDevOpsProvider{
-		connection:  conn,
+	p := &AzureDevOpsProvider{
 		account:     account,
 		rateLimiter: rate.NewLimiter(rate.Every(2*time.Second), 1),
-	}, nil
+	}
+
+	p.getProjects = func(ctx context.Context) ([]azdocore.TeamProjectReference, error) {
+		apiCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		coreClient, err := azdocore.NewClient(apiCtx, conn)
+		if err != nil {
+			return nil, fmt.Errorf("core client: %w", err)
+		}
+		result, err := coreClient.GetProjects(apiCtx, azdocore.GetProjectsArgs{})
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			return nil, nil
+		}
+		return result.Value, nil
+	}
+
+	p.getRepos = func(ctx context.Context, project string) ([]azdogit.GitRepository, error) {
+		apiCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+		defer cancel()
+		gitClient, err := azdogit.NewClient(apiCtx, conn)
+		if err != nil {
+			return nil, fmt.Errorf("git client: %w", err)
+		}
+		result, err := gitClient.GetRepositories(apiCtx, azdogit.GetRepositoriesArgs{Project: &project})
+		if err != nil {
+			return nil, err
+		}
+		if result == nil {
+			return nil, nil
+		}
+		return *result, nil
+	}
+
+	return p, nil
 }
 
 // Name returns the provider identifier.
@@ -52,56 +90,25 @@ func (a *AzureDevOpsProvider) ListRepositories(ctx context.Context, opts provide
 		return nil, fmt.Errorf("azuredevops rate limiter: %w", err)
 	}
 
-	apiCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
-	defer cancel()
-
-	coreClient, err := azdocore.NewClient(apiCtx, a.connection)
-	if err != nil {
-		return nil, fmt.Errorf("azuredevops core client: %w", err)
-	}
-
-	projects, err := coreClient.GetProjects(apiCtx, azdocore.GetProjectsArgs{})
+	projects, err := a.getProjects(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("azuredevops list projects: %w", err)
 	}
 
 	var repos []*provider.Repository
-	if projects == nil {
-		return repos, nil
-	}
-
-	for _, proj := range projects.Value {
+	for _, proj := range projects {
 		projName := *proj.Name
 
 		if err := a.rateLimiter.Wait(ctx); err != nil {
 			return nil, fmt.Errorf("azuredevops rate limiter: %w", err)
 		}
 
-		gitCtx, gitCancel := context.WithTimeout(ctx, 60*time.Second)
-		gitClient, err := azdogit.NewClient(gitCtx, a.connection)
-		gitCancel()
-		if err != nil {
-			return nil, fmt.Errorf("azuredevops git client: %w", err)
-		}
-
-		if err := a.rateLimiter.Wait(ctx); err != nil {
-			return nil, fmt.Errorf("azuredevops rate limiter: %w", err)
-		}
-
-		repoCtx, repoCancel := context.WithTimeout(ctx, 60*time.Second)
-		projectRepos, err := gitClient.GetRepositories(repoCtx, azdogit.GetRepositoriesArgs{
-			Project: &projName,
-		})
-		repoCancel()
+		projectRepos, err := a.getRepos(ctx, projName)
 		if err != nil {
 			return nil, fmt.Errorf("azuredevops list repos for project %s: %w", projName, err)
 		}
 
-		if projectRepos == nil {
-			continue
-		}
-
-		for _, r := range *projectRepos {
+		for _, r := range projectRepos {
 			repos = append(repos, a.mapRepo(r, projName))
 		}
 	}
@@ -116,22 +123,12 @@ func (a *AzureDevOpsProvider) mapRepo(r azdogit.GitRepository, projectName strin
 
 	defaultBranch := ""
 	if r.DefaultBranch != nil {
-		// strip "refs/heads/" prefix
 		db := *r.DefaultBranch
-		if len(db) > len("refs/heads/") {
-			defaultBranch = db[len("refs/heads/"):]
-		} else {
-			defaultBranch = db
-		}
+		defaultBranch = strings.TrimPrefix(db, "refs/heads/")
 	}
 
 	sshURL := fmt.Sprintf("git@ssh.dev.azure.com-%s:v3/%s/%s/%s", a.account.ID, org, projectName, repoName)
 	httpsURL := fmt.Sprintf("https://%s@dev.azure.com/%s/%s/_git/%s", org, org, projectName, repoName)
-
-	description := ""
-	if r.RemoteUrl != nil {
-		// use description field if available; AzDo SDK does not expose description here
-	}
 
 	return &provider.Repository{
 		Name:          repoName,
@@ -139,7 +136,6 @@ func (a *AzureDevOpsProvider) mapRepo(r azdogit.GitRepository, projectName strin
 		SSHURL:        sshURL,
 		HTTPSURL:      httpsURL,
 		DefaultBranch: defaultBranch,
-		Description:   description,
 		AccountID:     a.account.ID,
 	}
 }
