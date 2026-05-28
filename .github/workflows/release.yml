@@ -33,7 +33,7 @@ jobs:
           DATE=$(date -u +%Y.%m.%d)
           SUFFIX="${{ github.event.inputs.suffix }}"
           if [ -n "$SUFFIX" ]; then
-            VERSION="v${DATE}.${SUFFIX}"
+            VERSION="v${DATE}-${SUFFIX}"
           else
             VERSION="v${DATE}"
           fi
