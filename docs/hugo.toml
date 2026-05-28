@@ -8,6 +8,7 @@ theme = 'hugo-book'
 
 [markup.highlight]
   style = 'github'
+  noClasses = false
 
 [params]
   BookTheme     = 'auto'

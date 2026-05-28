@@ -1,0 +1,114 @@
+/* Syntax highlighting — github (light) + github-dark (dark).
+   Requires markup.highlight.noClasses = false in hugo.toml.
+   Wrapping in .markdown matches the specificity of _markdown.scss rules. */
+
+.markdown {
+  /* ── Light mode: github ── */
+  pre.chroma { background-color: #f7f7f7; color: #1f2328; }
+
+  .chroma {
+    .err { color: #f6f8fa; background-color: #82071e; }
+
+    /* Keywords */
+    .k, .kt { color: #cf222e; }
+
+    /* Names */
+    .na, .nc, .nx { color: #1f2328; }
+    .nb            { color: #6639ba; }
+    .bp            { color: #6a737d; }
+    .no, .nd, .nt  { color: #0550ae; }
+    .ni, .nf       { color: #6639ba; }
+    .nl            { font-weight: bold; color: #990000; }
+    .nn            { color: #24292e; }
+    .nv, .vc, .vg, .vi { color: #953800; }
+
+    /* Strings */
+    .s, .s1, .s2, .sb, .sc, .sd, .sh, .si, .sx { color: #0a3069; }
+    .sr { color: #0a3069; }
+    .ss { color: #032f62; }
+
+    /* Numbers */
+    .m, .mb, .mf, .mh, .mi, .il, .mo, .mx { color: #0550ae; }
+
+    /* Operators & punctuation */
+    .o { color: #0550ae; }
+    .p { color: #1f2328; }
+
+    /* Comments */
+    .c, .ch, .cm, .c1, .cs, .cp, .cpf { color: #57606a; }
+
+    /* Diff */
+    .gd { color: #82071e; background-color: #ffebe9; }
+    .gi { color: #116329; background-color: #dafbe1; }
+
+    /* Misc */
+    .ge { color: #1f2328; }
+    .go { color: #1f2328; }
+    .gl { text-decoration: underline; }
+    .w  { color: #ffffff; }
+  }
+
+  /* ── Dark mode: github-dark ── */
+  @media (prefers-color-scheme: dark) {
+    pre.chroma { background-color: #0d1117; color: #e6edf3; }
+
+    .chroma {
+      .err { color: #f85149; }
+      .hl  { background-color: #6e7681; }
+      .ln, .lnt { color: #6e7681; }
+
+      /* Keywords */
+      .k              { color: #ff7b72; }
+      .kc, .kp        { color: #79c0ff; }
+      .kd, .kn, .kr   { color: #ff7b72; }
+      .kt             { color: #79c0ff; }
+
+      /* Names */
+      .n, .nx, .g    { color: #e6edf3; }
+      .nc, .ne       { font-weight: bold; color: #f0883e; }
+      .no            { font-weight: bold; color: #79c0ff; }
+      .nd            { font-weight: bold; color: #d2a8ff; }
+      .ni            { color: #ffa657; }
+      .nf, .fm       { font-weight: bold; color: #d2a8ff; }
+      .nl            { font-weight: bold; color: #79c0ff; }
+      .nn            { color: #ff7b72; }
+      .py, .nv, .vc, .vg, .vi, .vm { color: #79c0ff; }
+      .nt            { color: #7ee787; }
+      .nb, .bp       { color: #e6edf3; }
+
+      /* Literals */
+      .l             { color: #a5d6ff; }
+      .ld            { color: #79c0ff; }
+      .s, .s1, .s2, .sb, .sc, .sd { color: #a5d6ff; }
+      .sa, .dl, .se, .sh, .sr { color: #79c0ff; }
+      .si, .sx, .ss  { color: #a5d6ff; }
+
+      /* Numbers */
+      .m, .mb, .mf, .mh, .mi, .il, .mo, .mx { color: #a5d6ff; }
+
+      /* Operators & punctuation */
+      .o, .ow { font-weight: bold; color: #ff7b72; }
+      .p      { color: #e6edf3; }
+
+      /* Comments */
+      .c, .ch, .cm, .c1 { font-style: italic; color: #8b949e; }
+      .cs               { font-weight: bold; font-style: italic; color: #8b949e; }
+      .cp, .cpf         { font-weight: bold; color: #8b949e; }
+
+      /* Diff */
+      .gd { color: #ffa198; background-color: #490202; }
+      .gi { color: #56d364;  background-color: #0f5323; }
+
+      /* Misc */
+      .ge { font-style: italic; }
+      .gr { color: #ffa198; }
+      .gh { font-weight: bold; color: #79c0ff; }
+      .go, .gp { color: #8b949e; }
+      .gs { font-weight: bold; }
+      .gu { color: #79c0ff; }
+      .gt { color: #ff7b72; }
+      .gl { text-decoration: underline; }
+      .w  { color: #6e7681; }
+    }
+  }
+}
