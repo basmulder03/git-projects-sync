@@ -19,12 +19,28 @@ A lightweight Go daemon that keeps your GitHub and Azure DevOps repositories in 
 
 ## Installation
 
+**Windows** (PowerShell):
+
+```powershell
+irm https://github.com/basmulder03/git-projects-sync/releases/latest/download/install.ps1 | iex
+```
+
+**Linux / macOS**:
+
+```bash
+curl -fsSL https://github.com/basmulder03/git-projects-sync/releases/latest/download/install.sh | sh
+```
+
+Both scripts download the latest release binary, place it on your PATH, and run `git-sync install` to register the autostart daemon.
+
+Alternatively, install via Go:
+
 ```bash
 go install github.com/basmulder03/git-projects-sync/cmd/git-sync@latest
 git-sync install
 ```
 
-Or download a pre-built binary from the [Releases](https://github.com/basmulder03/git-projects-sync/releases) page.
+Or download a pre-built binary manually from the [Releases](https://github.com/basmulder03/git-projects-sync/releases) page.
 
 See the [Installation guide](https://basmulder03.github.io/git-projects-sync/docs/installation/) for full details.
 
