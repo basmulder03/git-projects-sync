@@ -1,6 +1,6 @@
 # Build output
-git-sync
-git-sync.exe
+/git-sync
+/git-sync.exe
 dist/
 
 # Test artifacts
