@@ -24,7 +24,9 @@ try {
 
     New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
     $ExeSrc = Join-Path $Tmp "git-sync.exe"
-    Copy-Item -Path $ExeSrc -Destination (Join-Path $InstallDir "git-sync.exe") -Force
+    $ExeDest = Join-Path $InstallDir "git-sync.exe"
+    Copy-Item -Path $ExeSrc -Destination $ExeDest -Force
+    Unblock-File -Path $ExeDest
 } finally {
     Remove-Item -Recurse -Force $Tmp -ErrorAction SilentlyContinue
 }

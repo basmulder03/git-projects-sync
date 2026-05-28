@@ -255,6 +255,14 @@ func runAccountWizard(c *config.Config, configPath string) error {
 		}
 	}
 
+	switch prov {
+	case "github":
+		fmt.Println("\nPAT required scopes: repo  (or public_repo for public repos only)")
+		fmt.Println("Create at: https://github.com/settings/tokens")
+	case "azure_devops":
+		fmt.Println("\nPAT required scopes: Code › Read  (scoped to your organization)")
+		fmt.Println("Create at: https://dev.azure.com/{your-org}/_usersSettings/tokens")
+	}
 	if confirmYes(fmt.Sprintf("Store PAT for %q in keychain now", id)) {
 		if err := promptAndStorePAT(id); err != nil {
 			fmt.Fprintf(os.Stderr, "  PAT: %v\n", err)

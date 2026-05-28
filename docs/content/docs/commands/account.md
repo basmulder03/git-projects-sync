@@ -57,3 +57,28 @@ git-sync account set-pat <id>
 ```
 
 Prompts for a PAT and stores it in the OS keychain. The PAT is used for repository discovery only — not for cloning.
+
+## Required token permissions
+
+The PAT only needs read access to list repositories. No write permissions are required.
+
+### GitHub
+
+Create at **Settings → Developer settings → Personal access tokens**.
+
+| Scope | Purpose |
+|-------|---------|
+| `repo` | Read access to public and private repos |
+| `public_repo` | Read access to public repos only (if no private repos needed) |
+
+Fine-grained tokens: grant **Repository permissions → Contents: Read-only** for each target account/organisation.
+
+### Azure DevOps
+
+Create at **User settings → Personal access tokens** in your Azure DevOps organisation.
+
+| Scope | Purpose |
+|-------|---------|
+| Code › Read | List repositories and projects |
+
+Scope the token to the specific organisation rather than all accessible organisations.
