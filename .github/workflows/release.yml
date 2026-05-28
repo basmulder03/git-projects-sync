@@ -2,11 +2,6 @@ name: Release
 
 on:
   workflow_dispatch:
-    inputs:
-      suffix:
-        description: 'Optional suffix for same-day releases (e.g. 1, 2)'
-        required: false
-        default: ''
 
 permissions:
   contents: write
@@ -27,19 +22,21 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Run tests
+        run: go test ./...
+
       - name: Verify build
         run: go build ./cmd/git-sync
 
       - name: Compute version
         id: version
         run: |
-          DATE=$(date -u +%Y.%m.%d)
-          SUFFIX="${{ github.event.inputs.suffix }}"
-          if [ -n "$SUFFIX" ]; then
-            VERSION="v${DATE}-${SUFFIX}"
-          else
-            VERSION="v${DATE}"
-          fi
+          YEAR=$(date -u +%Y)
+          MONTH=$(date -u +%m)
+          DAY=$(date -u +%d)
+          COUNT=$(git tag --list "v${YEAR}.${MONTH}.${DAY}*" | wc -l)
+          BUILD=$((COUNT + 1))
+          VERSION="v${YEAR}.${MONTH}.${DAY}${BUILD}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       - name: Create and push tag
