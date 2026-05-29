@@ -5,6 +5,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime/debug"
 	"strconv"
@@ -40,6 +41,43 @@ var (
 	cfgPath string
 	cfg     *config.Config
 )
+
+// launchDaemon spawns a detached "daemon start" process using the current binary.
+func launchDaemon(configPath string) error {
+	exe, err := os.Executable()
+	if err != nil {
+		return fmt.Errorf("find executable: %w", err)
+	}
+	args := []string{"daemon", "start"}
+	if configPath != "" {
+		args = append(args, "--config", configPath)
+	}
+	cmd := exec.Command(exe, args...)
+	cmd.Stdin = nil
+	cmd.Stdout = nil
+	cmd.Stderr = nil
+	return cmd.Start()
+}
+
+// stopDaemonProcess kills the daemon process recorded in the PID file.
+func stopDaemonProcess() {
+	home, _ := os.UserHomeDir()
+	pidFile := filepath.Join(home, ".git-sync", "daemon.pid")
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		return
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		return
+	}
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return
+	}
+	_ = proc.Kill()
+	_ = os.Remove(pidFile)
+}
 
 func main() {
 	root := buildRoot()
@@ -107,7 +145,7 @@ func buildVersion() *cobra.Command {
 func buildUpdate(currentVersion string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "update",
-		Short: "Check for a newer release",
+		Short: "Check for and install a newer release",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			fmt.Print("Checking for updates... ")
 			info, available, err := updatepkg.CheckLatest(currentVersion)
@@ -125,8 +163,52 @@ func buildUpdate(currentVersion string) *cobra.Command {
 			}
 
 			fmt.Printf("update available: %s → %s\n", currentVersion, info.TagName)
-			fmt.Printf("release notes: %s\n", info.HTMLURL)
-			fmt.Println("\nTo update, run: go install github.com/basmulder03/git-projects-sync/cmd/git-sync@latest")
+			fmt.Printf("release notes: %s\n\n", info.HTMLURL)
+
+			if !stdinConfirmYes(fmt.Sprintf("Install %s now", info.TagName)) {
+				fmt.Println("Run manually: go install github.com/basmulder03/git-projects-sync/cmd/git-sync@latest")
+				return nil
+			}
+
+			// Stop daemon before replacing the binary (required on Windows).
+			home, _ := os.UserHomeDir()
+			pidFile := filepath.Join(home, ".git-sync", "daemon.pid")
+			daemonWasRunning := false
+			if _, err := os.Stat(pidFile); err == nil {
+				daemonWasRunning = true
+				fmt.Print("Stopping daemon... ")
+				stopDaemonProcess()
+				fmt.Println("done")
+			}
+
+			fmt.Print("Installing... ")
+			goExe, err := exec.LookPath("go")
+			if err != nil {
+				return fmt.Errorf("go not found in PATH: %w", err)
+			}
+			installCmd := exec.Command(goExe, "install",
+				"github.com/basmulder03/git-projects-sync/cmd/git-sync@"+info.TagName)
+			installCmd.Stdout = os.Stdout
+			installCmd.Stderr = os.Stderr
+			if err := installCmd.Run(); err != nil {
+				return fmt.Errorf("go install: %w", err)
+			}
+			fmt.Println("done")
+
+			if daemonWasRunning {
+				configPath := cfgPath
+				if configPath == "" {
+					configPath = config.DefaultConfigPath()
+				}
+				fmt.Print("Restarting daemon... ")
+				if err := launchDaemon(configPath); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: could not restart daemon: %v\n", err)
+				} else {
+					fmt.Println("done")
+				}
+			}
+
+			fmt.Printf("\nUpdated to %s\n", info.TagName)
 			return nil
 		},
 	}
@@ -165,6 +247,12 @@ func buildInstall() *cobra.Command {
 
 			if noWizard {
 				fmt.Println("\nDone. Run 'git-sync account add' to configure your first account.")
+				fmt.Print("Starting daemon... ")
+				if err := launchDaemon(configPath); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: could not start daemon: %v\n", err)
+				} else {
+					fmt.Println("done")
+				}
 				return nil
 			}
 
@@ -182,6 +270,19 @@ func buildInstall() *cobra.Command {
 				}
 			} else {
 				fmt.Printf("\nDone. %d account(s) configured.\n", len(cfg.Accounts))
+			}
+
+			// Start the daemon immediately so sync begins without waiting for next login.
+			dm := daemonpkg.New(cfg)
+			if dm.IsRunning() {
+				fmt.Println("Daemon already running.")
+			} else {
+				fmt.Print("Starting daemon... ")
+				if err := launchDaemon(configPath); err != nil {
+					fmt.Fprintf(os.Stderr, "warning: could not start daemon: %v\n", err)
+				} else {
+					fmt.Println("done")
+				}
 			}
 			return nil
 		},
