@@ -98,6 +98,15 @@ func Save(cfg *Config, path string) error {
 	return nil
 }
 
+// DeriveLocalPath builds the local clone path for a repo under workspaceRoot.
+// Layout: <workspaceRoot>/<provider>/<owner>/<repo>
+func DeriveLocalPath(workspaceRoot, provider, fullName string) string {
+	base := ExpandPath(workspaceRoot)
+	parts := strings.Split(fullName, "/")
+	segments := append([]string{base, provider}, parts...)
+	return filepath.Join(segments...)
+}
+
 // ExpandPath expands a leading ~ to the user home directory and cleans the path.
 func ExpandPath(p string) string {
 	if !strings.HasPrefix(p, "~") {

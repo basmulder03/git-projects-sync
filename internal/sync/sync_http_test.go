@@ -97,7 +97,7 @@ func TestCloneAndSync_OverHTTP(t *testing.T) {
 			{LocalPath: local, AutoSync: true},
 		},
 	}
-	s := syncer.New(cfg)
+	s := syncer.New(cfg, "")
 	if err := s.SyncAll(context.Background()); err != nil {
 		t.Fatalf("SyncAll after push: %v", err)
 	}

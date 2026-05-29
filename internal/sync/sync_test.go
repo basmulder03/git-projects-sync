@@ -108,7 +108,7 @@ func runSync(t *testing.T, r *testRepo, deleteMerged bool) error {
 			DeleteMergedBranches: deleteMerged,
 		},
 	}
-	s := syncer.New(cfg)
+	s := syncer.New(cfg, "")
 	return s.SyncRepo(context.Background(), config.RepoConfig{
 		AccountID: "test",
 		FullName:  "test/repo",
@@ -311,7 +311,7 @@ func TestSyncRepo_UnpublishedBranch_DefaultBranchUpdated(t *testing.T) {
 func TestSyncRepo_NotCloned_AttemptClone(t *testing.T) {
 	// Sync now attempts to clone missing repos; without a matching account it errors.
 	cfg := &config.Config{General: config.GeneralConfig{MaxConcurrentSyncs: 1}}
-	s := syncer.New(cfg)
+	s := syncer.New(cfg, "")
 	err := s.SyncRepo(context.Background(), config.RepoConfig{
 		AccountID: "test",
 		FullName:  "test/repo",
@@ -334,7 +334,7 @@ func TestSyncAll_SkipsAutoSyncFalse(t *testing.T) {
 			{AccountID: "test", FullName: "test/repo", LocalPath: r.local, AutoSync: false},
 		},
 	}
-	s := syncer.New(cfg)
+	s := syncer.New(cfg, "")
 	if err := s.SyncAll(context.Background()); err != nil {
 		t.Fatalf("SyncAll: %v", err)
 	}

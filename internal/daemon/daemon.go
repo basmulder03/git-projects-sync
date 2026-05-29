@@ -23,12 +23,12 @@ type Daemon struct {
 	pidFile string
 }
 
-// New creates a Daemon for the given config.
-func New(cfg *config.Config) *Daemon {
+// New creates a Daemon for the given config and config file path.
+func New(cfg *config.Config, cfgPath string) *Daemon {
 	home, _ := os.UserHomeDir()
 	return &Daemon{
 		cfg:     cfg,
-		syncer:  sync.New(cfg),
+		syncer:  sync.New(cfg, cfgPath),
 		stopCh:  make(chan struct{}),
 		pidFile: filepath.Join(home, ".git-sync", "daemon.pid"),
 	}
@@ -92,7 +92,7 @@ func (d *Daemon) IsRunning() bool {
 // RunForeground runs the sync loop in the foreground until ctx is cancelled.
 // Useful for debugging.
 func RunForeground(cfg *config.Config) {
-	syncer := sync.New(cfg)
+	syncer := sync.New(cfg, "")
 	interval, err := parseDuration(cfg.General.SyncInterval)
 	if err != nil {
 		interval = 15 * time.Minute

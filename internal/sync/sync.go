@@ -7,23 +7,29 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/basmulder03/git-projects-sync/internal/auth"
 	"github.com/basmulder03/git-projects-sync/internal/config"
 	gitpkg "github.com/basmulder03/git-projects-sync/internal/git"
 	"github.com/basmulder03/git-projects-sync/internal/logging"
+	"github.com/basmulder03/git-projects-sync/internal/provider"
+	"github.com/basmulder03/git-projects-sync/internal/registry"
 )
 
 // Syncer orchestrates syncing of all tracked repositories.
 type Syncer struct {
-	cfg *config.Config
+	cfg     *config.Config
+	cfgPath string
 }
 
 // New creates a Syncer backed by the given config.
-func New(cfg *config.Config) *Syncer {
-	return &Syncer{cfg: cfg}
+func New(cfg *config.Config, cfgPath string) *Syncer {
+	return &Syncer{cfg: cfg, cfgPath: cfgPath}
 }
 
-// SyncAll syncs every repository defined in config, honouring MaxConcurrentSyncs.
+// SyncAll discovers new repos from all accounts, then syncs every tracked repository.
 func (s *Syncer) SyncAll(ctx context.Context) error {
+	s.discoverNewRepos(ctx)
+
 	maxConcurrent := s.cfg.General.MaxConcurrentSyncs
 	if maxConcurrent <= 0 {
 		maxConcurrent = 4
@@ -55,6 +61,53 @@ func (s *Syncer) SyncAll(ctx context.Context) error {
 		}
 	}
 	return firstErr
+}
+
+// discoverNewRepos queries each account for repositories and registers any that
+// are not yet tracked. Errors per account are logged and skipped so one broken
+// account does not block others.
+func (s *Syncer) discoverNewRepos(ctx context.Context) {
+	existing := make(map[string]bool, len(s.cfg.Repositories))
+	for _, r := range s.cfg.Repositories {
+		existing[r.FullName] = true
+	}
+
+	added := 0
+	for _, account := range s.cfg.Accounts {
+		a := auth.NewPATAuth(account.ID)
+		prov, err := registry.NewProvider(account, a)
+		if err != nil {
+			logging.Warn("discovery: provider init failed", "account", account.ID, "err", err)
+			continue
+		}
+		repos, err := prov.ListRepositories(ctx, provider.ListOptions{PageSize: 100})
+		if err != nil {
+			logging.Warn("discovery: list repos failed", "account", account.ID, "err", err)
+			continue
+		}
+		for _, r := range repos {
+			if existing[r.FullName] {
+				continue
+			}
+			localPath := config.DeriveLocalPath(s.cfg.General.WorkspaceRoot, account.Provider, r.FullName)
+			s.cfg.Repositories = append(s.cfg.Repositories, config.RepoConfig{
+				AccountID:     account.ID,
+				FullName:      r.FullName,
+				LocalPath:     localPath,
+				AutoSync:      true,
+				DefaultBranch: r.DefaultBranch,
+			})
+			existing[r.FullName] = true
+			added++
+			logging.Info("discovery: new repo registered", "account", account.ID, "repo", r.FullName)
+		}
+	}
+
+	if added > 0 && s.cfgPath != "" {
+		if err := config.Save(s.cfg, s.cfgPath); err != nil {
+			logging.Warn("discovery: save config failed", "err", err)
+		}
+	}
 }
 
 // buildCloneURL returns the clone URL for a repo based on its account's clone method.

@@ -273,7 +273,7 @@ func buildInstall() *cobra.Command {
 			}
 
 			// Start the daemon immediately so sync begins without waiting for next login.
-			dm := daemonpkg.New(cfg)
+			dm := daemonpkg.New(cfg, cfgPath)
 			if dm.IsRunning() {
 				fmt.Println("Daemon already running.")
 			} else {
@@ -863,10 +863,7 @@ func buildDiscover() *cobra.Command {
 }
 
 func deriveLocalPath(workspaceRoot string, account config.AccountConfig, r *provider.Repository) string {
-	base := config.ExpandPath(workspaceRoot)
-	parts := strings.Split(r.FullName, "/")
-	segments := append([]string{base, account.Provider}, parts...)
-	return filepath.Join(segments...)
+	return config.DeriveLocalPath(workspaceRoot, account.Provider, r.FullName)
 }
 
 // --- repo ---
@@ -982,7 +979,7 @@ func buildSync() *cobra.Command {
 				return nil
 			}
 
-			syncer := syncpkg.New(cfg)
+			syncer := syncpkg.New(cfg, cfgPath)
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
 			defer cancel()
 
@@ -1064,7 +1061,7 @@ func buildDaemon() *cobra.Command {
 		Use:   "start",
 		Short: "Start the background daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			dm := daemonpkg.New(cfg)
+			dm := daemonpkg.New(cfg, cfgPath)
 			if err := dm.Start(); err != nil {
 				return err
 			}
@@ -1078,7 +1075,7 @@ func buildDaemon() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the background daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			dm := daemonpkg.New(cfg)
+			dm := daemonpkg.New(cfg, cfgPath)
 			if !dm.IsRunning() {
 				fmt.Println("Daemon is not running")
 				return nil
@@ -1091,7 +1088,7 @@ func buildDaemon() *cobra.Command {
 		Use:   "status",
 		Short: "Show daemon status",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			dm := daemonpkg.New(cfg)
+			dm := daemonpkg.New(cfg, cfgPath)
 			if dm.IsRunning() {
 				fmt.Println("Daemon is running")
 			} else {
