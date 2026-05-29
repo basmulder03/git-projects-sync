@@ -207,39 +207,14 @@ func buildUninstall() *cobra.Command {
 
 // runAccountWizard interactively collects account details and saves to config.
 func runAccountWizard(c *config.Config, configPath string) error {
-	scanner := bufio.NewScanner(os.Stdin)
-
-	prompt := func(question string) string {
-		fmt.Print(question)
-		scanner.Scan()
-		return strings.TrimSpace(scanner.Text())
-	}
-	promptDefault := func(question, def string) string {
-		fmt.Printf("%s [%s]: ", question, def)
-		scanner.Scan()
-		v := strings.TrimSpace(scanner.Text())
-		if v == "" {
-			return def
-		}
-		return v
-	}
-	confirmYes := func(question string) bool {
-		fmt.Printf("%s [Y/n]: ", question)
-		scanner.Scan()
-		v := strings.TrimSpace(strings.ToLower(scanner.Text()))
-		return v == "" || v == "y" || v == "yes"
-	}
-
-	// Provider
-	prov := prompt("Provider (github / azure_devops): ")
+	prov := stdinPrompt("Provider (github / azure_devops): ")
 	switch prov {
 	case "github", "azure_devops":
 	default:
 		return fmt.Errorf("unknown provider %q — must be github or azure_devops", prov)
 	}
 
-	// Account ID
-	id := prompt("Account ID (e.g. github-personal): ")
+	id := stdinPrompt("Account ID (e.g. github-personal): ")
 	if id == "" {
 		return fmt.Errorf("account ID cannot be empty")
 	}
@@ -251,15 +226,13 @@ func runAccountWizard(c *config.Config, configPath string) error {
 
 	var username, org string
 	if prov == "github" {
-		username = prompt("GitHub username: ")
+		username = stdinPrompt("GitHub username: ")
 	} else {
-		org = prompt("Azure DevOps organization: ")
+		org = stdinPrompt("Azure DevOps organization: ")
 	}
 
-	defaultKey := fmt.Sprintf("~/.ssh/git-sync-%s", id)
-	sshKey := promptDefault("SSH key path", defaultKey)
-
-	cloneMethod := promptDefault("Clone method (ssh / https)", "ssh")
+	sshKey := stdinPromptDefault("SSH key path", fmt.Sprintf("~/.ssh/git-sync-%s", id))
+	cloneMethod := stdinPromptDefault("Clone method (ssh / https)", "ssh")
 	if cloneMethod != "ssh" && cloneMethod != "https" {
 		cloneMethod = "ssh"
 	}
@@ -275,7 +248,7 @@ func runAccountWizard(c *config.Config, configPath string) error {
 	c.Accounts = append(c.Accounts, account)
 
 	if cloneMethod == "ssh" {
-		if confirmYes(fmt.Sprintf("Generate SSH key at %s", sshKey)) {
+		if stdinConfirmYes(fmt.Sprintf("Generate SSH key at %s", sshKey)) {
 			if err := gitpkg.GenerateSSHKey(sshKey, "git-sync:"+id, false); err != nil {
 				fmt.Fprintf(os.Stderr, "  Key generation: %v\n", err)
 			} else {
@@ -303,7 +276,7 @@ func runAccountWizard(c *config.Config, configPath string) error {
 		fmt.Println("\nPAT required scopes: Code › Read  (scoped to your organization)")
 		fmt.Println("Create at: https://dev.azure.com/{your-org}/_usersSettings/tokens")
 	}
-	if confirmYes(fmt.Sprintf("Store PAT for %q in keychain now", id)) {
+	if stdinConfirmYes(fmt.Sprintf("Store PAT for %q in keychain now", id)) {
 		if err := promptAndStorePAT(id); err != nil {
 			fmt.Fprintf(os.Stderr, "  PAT: %v\n", err)
 		}
@@ -486,12 +459,50 @@ func buildAccountAdd() *cobra.Command {
 		org         string
 		sshKey      string
 		cloneMethod string
-		setPAT      bool
 	)
 	cmd := &cobra.Command{
 		Use:   "add",
 		Short: "Add a provider account",
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Prompt for any field not supplied via flags.
+			if provider == "" {
+				provider = stdinPrompt("Provider (github / azure_devops): ")
+			}
+			switch provider {
+			case "github", "azure_devops":
+			default:
+				return fmt.Errorf("unknown provider %q — must be github or azure_devops", provider)
+			}
+
+			if id == "" {
+				id = stdinPrompt("Account ID (e.g. github-personal): ")
+			}
+			if id == "" {
+				return fmt.Errorf("account ID cannot be empty")
+			}
+			for _, a := range cfg.Accounts {
+				if a.ID == id {
+					return fmt.Errorf("account %q already exists", id)
+				}
+			}
+
+			if provider == "github" && username == "" {
+				username = stdinPrompt("GitHub username: ")
+			} else if provider == "azure_devops" && org == "" {
+				org = stdinPrompt("Azure DevOps organization: ")
+			}
+
+			if !cmd.Flags().Changed("clone-method") {
+				cloneMethod = stdinPromptDefault("Clone method (ssh / https)", "ssh")
+				if cloneMethod != "ssh" && cloneMethod != "https" {
+					cloneMethod = "ssh"
+				}
+			}
+
+			if cloneMethod == "ssh" && sshKey == "" {
+				sshKey = stdinPromptDefault("SSH key path", fmt.Sprintf("~/.ssh/git-sync-%s", id))
+			}
+
 			account := config.AccountConfig{
 				ID:           id,
 				Provider:     provider,
@@ -500,16 +511,7 @@ func buildAccountAdd() *cobra.Command {
 				SSHKeyPath:   sshKey,
 				CloneMethod:  cloneMethod,
 			}
-			if cloneMethod == "" {
-				account.CloneMethod = "ssh"
-			}
 
-			// Check duplicate ID.
-			for _, a := range cfg.Accounts {
-				if a.ID == id {
-					return fmt.Errorf("account %q already exists", id)
-				}
-			}
 			cfg.Accounts = append(cfg.Accounts, account)
 
 			if sshKey != "" {
@@ -518,28 +520,57 @@ func buildAccountAdd() *cobra.Command {
 				}
 			}
 
-			if setPAT {
-				if err := promptAndStorePAT(id); err != nil {
-					return err
-				}
-			}
-
 			if err := config.Save(cfg, cfgPath); err != nil {
 				return err
 			}
 			fmt.Printf("Account %q added\n", id)
+
+			// Offer SSH key generation.
+			if cloneMethod == "ssh" && sshKey != "" {
+				if stdinConfirmYes(fmt.Sprintf("Generate SSH key at %s", sshKey)) {
+					if err := gitpkg.GenerateSSHKey(sshKey, "git-sync:"+id, false); err != nil {
+						fmt.Fprintf(os.Stderr, "  Key generation: %v\n", err)
+					} else {
+						if err := gitpkg.EnsureSSHEntry(account); err != nil {
+							fmt.Fprintf(os.Stderr, "  SSH config: %v\n", err)
+						} else {
+							fmt.Printf("  SSH config entry: %s\n", gitpkg.SSHHostAlias(account))
+						}
+						pubKey, err := gitpkg.ReadPublicKey(sshKey)
+						if err == nil {
+							fmt.Printf("\nPublic key (add this to your provider):\n\n%s\n\n", pubKey)
+						}
+						if url := gitpkg.ProviderKeyURL(account); url != "" {
+							fmt.Printf("Add at: %s\n\n", url)
+						}
+					}
+				}
+			}
+
+			// Offer PAT setup.
+			switch provider {
+			case "github":
+				fmt.Println("PAT required scopes: repo  (or public_repo for public repos only)")
+				fmt.Println("Create at: https://github.com/settings/tokens")
+			case "azure_devops":
+				fmt.Println("PAT required scopes: Code › Read  (scoped to your organization)")
+				fmt.Println("Create at: https://dev.azure.com/{your-org}/_usersSettings/tokens")
+			}
+			if stdinConfirmYes(fmt.Sprintf("Store PAT for %q in keychain now", id)) {
+				if err := promptAndStorePAT(id); err != nil {
+					fmt.Fprintf(os.Stderr, "  PAT: %v\n", err)
+				}
+			}
+
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&provider, "provider", "", "github or azure_devops (required)")
-	cmd.Flags().StringVar(&id, "id", "", "unique account ID (required)")
+	cmd.Flags().StringVar(&provider, "provider", "", "github or azure_devops")
+	cmd.Flags().StringVar(&id, "id", "", "unique account ID")
 	cmd.Flags().StringVar(&username, "username", "", "GitHub username or AzDo username")
 	cmd.Flags().StringVar(&org, "org", "", "Azure DevOps organisation")
 	cmd.Flags().StringVar(&sshKey, "ssh-key", "", "path to SSH private key")
 	cmd.Flags().StringVar(&cloneMethod, "clone-method", "ssh", "ssh or https")
-	cmd.Flags().BoolVar(&setPAT, "set-pat", false, "prompt for PAT and store in keychain")
-	_ = cmd.MarkFlagRequired("provider")
-	_ = cmd.MarkFlagRequired("id")
 	return cmd
 }
 
@@ -598,6 +629,33 @@ func buildAccountSetPAT() *cobra.Command {
 			return promptAndStorePAT(args[0])
 		},
 	}
+}
+
+// --- stdin prompt helpers ---
+
+var stdinScanner = bufio.NewScanner(os.Stdin)
+
+func stdinPrompt(question string) string {
+	fmt.Print(question)
+	stdinScanner.Scan()
+	return strings.TrimSpace(stdinScanner.Text())
+}
+
+func stdinPromptDefault(question, def string) string {
+	fmt.Printf("%s [%s]: ", question, def)
+	stdinScanner.Scan()
+	v := strings.TrimSpace(stdinScanner.Text())
+	if v == "" {
+		return def
+	}
+	return v
+}
+
+func stdinConfirmYes(question string) bool {
+	fmt.Printf("%s [Y/n]: ", question)
+	stdinScanner.Scan()
+	v := strings.TrimSpace(strings.ToLower(stdinScanner.Text()))
+	return v == "" || v == "y" || v == "yes"
 }
 
 func promptAndStorePAT(accountID string) error {
