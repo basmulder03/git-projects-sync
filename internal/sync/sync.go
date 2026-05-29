@@ -4,6 +4,7 @@ package sync
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 
 	"github.com/basmulder03/git-projects-sync/internal/config"
@@ -56,13 +57,42 @@ func (s *Syncer) SyncAll(ctx context.Context) error {
 	return firstErr
 }
 
+// buildCloneURL returns the clone URL for a repo based on its account's clone method.
+func (s *Syncer) buildCloneURL(repoCfg config.RepoConfig) (string, error) {
+	for _, a := range s.cfg.Accounts {
+		if a.ID != repoCfg.AccountID {
+			continue
+		}
+		if a.CloneMethod == "https" {
+			switch a.Provider {
+			case "github":
+				return fmt.Sprintf("https://github.com/%s.git", repoCfg.FullName), nil
+			case "azure_devops":
+				parts := strings.SplitN(repoCfg.FullName, "/", 2)
+				if len(parts) == 2 {
+					return fmt.Sprintf("https://dev.azure.com/%s/_git/%s", a.Organization, parts[1]), nil
+				}
+			}
+		}
+		// Default: SSH via host alias.
+		return fmt.Sprintf("git@%s:%s.git", gitpkg.SSHHostAlias(a), repoCfg.FullName), nil
+	}
+	return "", fmt.Errorf("account %q not found", repoCfg.AccountID)
+}
+
 // SyncRepo syncs a single repository according to the sync policy.
 func (s *Syncer) SyncRepo(ctx context.Context, repoCfg config.RepoConfig) error {
 	localPath := config.ExpandPath(repoCfg.LocalPath)
 
 	if !gitpkg.IsRepo(localPath) {
-		logging.Info("repo not cloned, skipping", "path", localPath)
-		return nil
+		cloneURL, err := s.buildCloneURL(repoCfg)
+		if err != nil {
+			return fmt.Errorf("sync %s: build clone URL: %w", repoCfg.FullName, err)
+		}
+		logging.Info("cloning repo", "path", localPath, "url", cloneURL)
+		if err := gitpkg.Clone(cloneURL, localPath); err != nil {
+			return fmt.Errorf("sync %s: clone: %w", repoCfg.FullName, err)
+		}
 	}
 
 	status, err := gitpkg.GetStatus(localPath)
