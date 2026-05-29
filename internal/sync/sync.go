@@ -127,7 +127,10 @@ func (s *Syncer) buildCloneURL(repoCfg config.RepoConfig) (string, error) {
 				}
 			}
 		}
-		// Default: SSH via host alias.
+		// Azure DevOps SSH requires the v3/ path prefix and no .git suffix.
+		if a.Provider == "azure_devops" {
+			return fmt.Sprintf("git@%s:v3/%s", gitpkg.SSHHostAlias(a), repoCfg.FullName), nil
+		}
 		return fmt.Sprintf("git@%s:%s.git", gitpkg.SSHHostAlias(a), repoCfg.FullName), nil
 	}
 	return "", fmt.Errorf("account %q not found", repoCfg.AccountID)
