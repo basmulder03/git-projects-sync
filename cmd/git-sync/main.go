@@ -350,7 +350,7 @@ func runAccountWizard(c *config.Config, configPath string) error {
 
 	if cloneMethod == "ssh" {
 		if stdinConfirmYes(fmt.Sprintf("Generate SSH key at %s", sshKey)) {
-			if err := gitpkg.GenerateSSHKey(sshKey, "git-sync:"+id, false); err != nil {
+			if err := gitpkg.GenerateSSHKey(sshKey, "git-sync:"+id, false, gitpkg.SSHKeyTypeForProvider(prov)); err != nil {
 				fmt.Fprintf(os.Stderr, "  Key generation: %v\n", err)
 			} else {
 				if err := gitpkg.EnsureSSHEntry(account); err != nil {
@@ -629,7 +629,7 @@ func buildAccountAdd() *cobra.Command {
 			// Offer SSH key generation.
 			if cloneMethod == "ssh" && sshKey != "" {
 				if stdinConfirmYes(fmt.Sprintf("Generate SSH key at %s", sshKey)) {
-					if err := gitpkg.GenerateSSHKey(sshKey, "git-sync:"+id, false); err != nil {
+					if err := gitpkg.GenerateSSHKey(sshKey, "git-sync:"+id, false, gitpkg.SSHKeyTypeForProvider(provider)); err != nil {
 						fmt.Fprintf(os.Stderr, "  Key generation: %v\n", err)
 					} else {
 						if err := gitpkg.EnsureSSHEntry(account); err != nil {
@@ -1172,7 +1172,7 @@ func buildSSHGenerate() *cobra.Command {
 			}
 
 			comment := fmt.Sprintf("git-sync:%s", account.ID)
-			if err := gitpkg.GenerateSSHKey(account.SSHKeyPath, comment, force); err != nil {
+			if err := gitpkg.GenerateSSHKey(account.SSHKeyPath, comment, force, gitpkg.SSHKeyTypeForProvider(account.Provider)); err != nil {
 				return err
 			}
 			fmt.Printf("Key generated: %s\n", config.ExpandPath(account.SSHKeyPath))

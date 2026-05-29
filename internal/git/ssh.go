@@ -159,7 +159,16 @@ func ReadPublicKey(privateKeyPath string) (string, error) {
 
 // GenerateSSHKey generates an ed25519 SSH key pair at keyPath using ssh-keygen.
 // Set overwrite=true to replace an existing key.
-func GenerateSSHKey(keyPath, comment string, overwrite bool) error {
+// SSHKeyTypeForProvider returns the SSH key type appropriate for a provider.
+// Azure DevOps only accepts RSA keys; all other providers support ed25519.
+func SSHKeyTypeForProvider(provider string) string {
+	if provider == "azure_devops" {
+		return "rsa"
+	}
+	return "ed25519"
+}
+
+func GenerateSSHKey(keyPath, comment string, overwrite bool, keyType string) error {
 	expanded := config.ExpandPath(keyPath)
 
 	if !overwrite {
@@ -179,8 +188,16 @@ func GenerateSSHKey(keyPath, comment string, overwrite bool) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	if keyType == "" {
+		keyType = "ed25519"
+	}
+
 	var stderr bytes.Buffer
-	cmd := exec.CommandContext(ctx, "ssh-keygen", "-t", "ed25519", "-C", comment, "-f", expanded, "-N", "")
+	args := []string{"-t", keyType, "-C", comment, "-f", expanded, "-N", ""}
+	if keyType == "rsa" {
+		args = append([]string{"-b", "4096"}, args...)
+	}
+	cmd := exec.CommandContext(ctx, "ssh-keygen", args...)
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
 		return fmt.Errorf("ssh-keygen: %w\n%s", err, stderr.String())
