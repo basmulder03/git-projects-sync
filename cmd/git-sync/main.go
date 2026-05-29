@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"text/tabwriter"
@@ -27,8 +28,13 @@ import (
 	updatepkg "github.com/basmulder03/git-projects-sync/internal/update"
 )
 
-// version is injected by goreleaser via -ldflags "-X main.version=..."
-var version = "dev"
+// version is set at build time via -ldflags or read from the embedded module info.
+var version = func() string {
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return "dev"
+}()
 
 var (
 	cfgPath string
