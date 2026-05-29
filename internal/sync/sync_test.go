@@ -308,7 +308,8 @@ func TestSyncRepo_UnpublishedBranch_DefaultBranchUpdated(t *testing.T) {
 	}
 }
 
-func TestSyncRepo_NotCloned_Skip(t *testing.T) {
+func TestSyncRepo_NotCloned_AttemptClone(t *testing.T) {
+	// Sync now attempts to clone missing repos; without a matching account it errors.
 	cfg := &config.Config{General: config.GeneralConfig{MaxConcurrentSyncs: 1}}
 	s := syncer.New(cfg)
 	err := s.SyncRepo(context.Background(), config.RepoConfig{
@@ -317,8 +318,8 @@ func TestSyncRepo_NotCloned_Skip(t *testing.T) {
 		LocalPath: filepath.Join(t.TempDir(), "does-not-exist"),
 		AutoSync:  true,
 	})
-	if err != nil {
-		t.Errorf("uncloned repo should be silently skipped, got: %v", err)
+	if err == nil {
+		t.Error("expected error when account not found for clone, got nil")
 	}
 }
 
