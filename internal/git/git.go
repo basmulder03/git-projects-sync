@@ -45,7 +45,7 @@ func IsRepo(path string) bool {
 func Clone(sshOrHTTPSURL, localPath string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	return run(ctx, "", "git", "clone", sshOrHTTPSURL, localPath)
+	return run(ctx, "", "git", "clone", "-c", "core.longpaths=true", sshOrHTTPSURL, localPath)
 }
 
 // GetStatus returns the current status of the repository at localPath.
