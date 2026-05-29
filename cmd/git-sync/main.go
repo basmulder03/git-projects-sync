@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -72,6 +73,7 @@ func buildRoot() *cobra.Command {
 	root.AddCommand(buildInstall())
 	root.AddCommand(buildUninstall())
 	root.AddCommand(buildInit())
+	root.AddCommand(buildConfig())
 	root.AddCommand(buildAccount())
 	root.AddCommand(buildDiscover())
 	root.AddCommand(buildRepo())
@@ -328,6 +330,129 @@ func buildInit() *cobra.Command {
 				return err
 			}
 			fmt.Printf("Config created at %s\n", path)
+			return nil
+		},
+	}
+}
+
+// --- config ---
+
+type configField struct {
+	get func(*config.GeneralConfig) string
+	set func(*config.GeneralConfig, string) error
+}
+
+var configFields = map[string]configField{
+	"workspace_root": {
+		get: func(g *config.GeneralConfig) string { return g.WorkspaceRoot },
+		set: func(g *config.GeneralConfig, v string) error { g.WorkspaceRoot = v; return nil },
+	},
+	"sync_interval": {
+		get: func(g *config.GeneralConfig) string { return g.SyncInterval },
+		set: func(g *config.GeneralConfig, v string) error { g.SyncInterval = v; return nil },
+	},
+	"log_level": {
+		get: func(g *config.GeneralConfig) string { return g.LogLevel },
+		set: func(g *config.GeneralConfig, v string) error {
+			switch v {
+			case "debug", "info", "warn", "error":
+			default:
+				return fmt.Errorf("log_level must be debug, info, warn, or error")
+			}
+			g.LogLevel = v
+			return nil
+		},
+	},
+	"log_file": {
+		get: func(g *config.GeneralConfig) string { return g.LogFile },
+		set: func(g *config.GeneralConfig, v string) error { g.LogFile = v; return nil },
+	},
+	"max_concurrent_syncs": {
+		get: func(g *config.GeneralConfig) string { return strconv.Itoa(g.MaxConcurrentSyncs) },
+		set: func(g *config.GeneralConfig, v string) error {
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return fmt.Errorf("max_concurrent_syncs must be a positive integer")
+			}
+			g.MaxConcurrentSyncs = n
+			return nil
+		},
+	},
+	"delete_merged_branches": {
+		get: func(g *config.GeneralConfig) string { return strconv.FormatBool(g.DeleteMergedBranches) },
+		set: func(g *config.GeneralConfig, v string) error {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("delete_merged_branches must be true or false")
+			}
+			g.DeleteMergedBranches = b
+			return nil
+		},
+	},
+}
+
+func buildConfig() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "config",
+		Short: "View or edit general configuration",
+	}
+	c.AddCommand(buildConfigShow())
+	c.AddCommand(buildConfigGet())
+	c.AddCommand(buildConfigSet())
+	return c
+}
+
+func buildConfigShow() *cobra.Command {
+	return &cobra.Command{
+		Use:   "show",
+		Short: "Print all general config values",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			keys := []string{
+				"workspace_root", "sync_interval", "log_level", "log_file",
+				"max_concurrent_syncs", "delete_merged_branches",
+			}
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+			for _, k := range keys {
+				fmt.Fprintf(w, "%s\t= %s\n", k, configFields[k].get(&cfg.General))
+			}
+			return w.Flush()
+		},
+	}
+}
+
+func buildConfigGet() *cobra.Command {
+	return &cobra.Command{
+		Use:   "get <key>",
+		Short: "Print value of a config key",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			f, ok := configFields[args[0]]
+			if !ok {
+				return fmt.Errorf("unknown config key %q", args[0])
+			}
+			fmt.Println(f.get(&cfg.General))
+			return nil
+		},
+	}
+}
+
+func buildConfigSet() *cobra.Command {
+	return &cobra.Command{
+		Use:   "set <key> <value>",
+		Short: "Set a config value and save",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(_ *cobra.Command, args []string) error {
+			f, ok := configFields[args[0]]
+			if !ok {
+				return fmt.Errorf("unknown config key %q", args[0])
+			}
+			if err := f.set(&cfg.General, args[1]); err != nil {
+				return err
+			}
+			if err := config.Save(cfg, cfgPath); err != nil {
+				return err
+			}
+			fmt.Printf("%s = %s\n", args[0], args[1])
 			return nil
 		},
 	}
